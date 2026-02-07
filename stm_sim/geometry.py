@@ -532,7 +532,12 @@ def plot_scene_top_view(scene: Scene, ax=None, show: bool = False):
     return fig, ax
 
 
-def plot_scene_3d(scene: Scene, views: List[Tuple[float, float]] | None = None, show: bool = False):
+def plot_scene_3d(
+    scene: Scene,
+    views: List[Tuple[float, float]] | None = None,
+    show: bool = False,
+    zlim: Tuple[float, float] | None = None,
+):
     try:
         import matplotlib.pyplot as plt
         from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
