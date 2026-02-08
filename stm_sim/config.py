@@ -22,6 +22,8 @@ class FeatureConfig:
     roughness_sigma: float = 0.02
     molecule_count: Tuple[int, int] = (0, 2)
     molecule_name: str = "FePc"
+    molecule_z_scale: float = 1.0
+    molecule_xy_scale: float = 1.0
     # Height from local surface to molecule top (Å)
     molecule_height: float = 2.0
     molecule_height_sigma: float = 0.15

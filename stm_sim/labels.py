@@ -13,7 +13,7 @@ def _mark_circle(mask, x, y, positions, radius, class_id):
     mask[min_dist2 <= radius * radius] = class_id
 
 
-def generate_mask(scene, pixels, label_cfg, bbox=None):
+def generate_mask(scene, pixels, label_cfg, bbox=None, blur_radius: float = 0.0):
     x, y = grid_from_bbox(bbox if bbox is not None else scene.bbox, pixels)
     mask = np.full(x.shape, 1, dtype=np.int64)
 
@@ -21,7 +21,7 @@ def generate_mask(scene, pixels, label_cfg, bbox=None):
 
     # step edges
     for edge in scene.step_edges:
-        width = label_cfg.step_edge_width
+        width = label_cfg.step_edge_width + 2.0 * blur_radius
         normal = np.array(edge.get("normal", [1.0, 0.0]), dtype=float)
         normal_norm = np.linalg.norm(normal)
         if normal_norm == 0:
@@ -33,14 +33,14 @@ def generate_mask(scene, pixels, label_cfg, bbox=None):
 
     # vacancies
     if scene.vacancies.size > 0:
-        _mark_circle(mask, x, y, scene.vacancies, label_cfg.vacancy_radius, 4)
+        _mark_circle(mask, x, y, scene.vacancies, label_cfg.vacancy_radius + blur_radius, 4)
 
     # adatoms
     adatom_positions = scene.positions[scene.types == "adatom"]
-    _mark_circle(mask, x, y, adatom_positions, label_cfg.adatom_radius, 2)
+    _mark_circle(mask, x, y, adatom_positions, label_cfg.adatom_radius + blur_radius, 2)
 
     # molecules
     molecule_positions = scene.positions[scene.types == "molecule"]
-    _mark_circle(mask, x, y, molecule_positions, label_cfg.molecule_radius, 3)
+    _mark_circle(mask, x, y, molecule_positions, label_cfg.molecule_radius + blur_radius, 3)
 
     return mask

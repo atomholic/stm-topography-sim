@@ -69,6 +69,8 @@ def build_scene_from_config(cfg: SimulationConfig, rng: np.random.Generator):
         height=cfg.features.molecule_height,
         height_sigma=cfg.features.molecule_height_sigma,
         molecule_name=cfg.features.molecule_name,
+        molecule_z_scale=cfg.features.molecule_z_scale,
+        molecule_xy_scale=cfg.features.molecule_xy_scale,
     )
 
     add_surface_roughness(scene, cfg.features.roughness_sigma, rng=rng)
@@ -99,7 +101,14 @@ def generate_sample(cfg: SimulationConfig, seed: int | None = None, debug: bool 
     dx = (xmax - xmin) / max(1, nx - 1)
     dy = (ymax - ymin) / max(1, ny - 1)
     image = apply_noise(height, cfg.noise, rng, pixel_size=(dx, dy)).astype(np.float32)
-    mask = generate_mask(scene, cfg.image.pixels, cfg.labels, bbox=base_bbox).astype(np.int64)
+    blur_radius = float(np.mean(cfg.noise.tip_sigma))
+    mask = generate_mask(
+        scene,
+        cfg.image.pixels,
+        cfg.labels,
+        bbox=base_bbox,
+        blur_radius=blur_radius,
+    ).astype(np.int64)
 
     molecule_positions = scene.positions[scene.types == "molecule"]
     metadata = {
@@ -108,6 +117,8 @@ def generate_sample(cfg: SimulationConfig, seed: int | None = None, debug: bool 
         "size_angstrom": scene.size_angstrom,
         "setpoint": float(setpoint),
         "molecule_name": cfg.features.molecule_name,
+        "molecule_z_scale": cfg.features.molecule_z_scale,
+        "molecule_xy_scale": cfg.features.molecule_xy_scale,
         "atoms": [
             {"type": t, "position": scene.positions[i].tolist()}
             for i, t in enumerate(scene.types.tolist())

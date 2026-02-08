@@ -418,12 +418,21 @@ def add_molecules(
     height: float = 2.0,
     height_sigma: float = 0.1,
     molecule_name: str = "FePc",
+    molecule_z_scale: float = 1.0,
+    molecule_xy_scale: float = 1.0,
 ):
     if count <= 0:
         return
     rng = ensure_rng(rng)
     coords = load_molecule(molecule_name)
     coords = coords - coords.mean(axis=0, keepdims=True)
+    if molecule_z_scale != 1.0 or molecule_xy_scale != 1.0:
+        coords = coords.copy()
+    if molecule_xy_scale != 1.0:
+        coords[:, 0] *= float(molecule_xy_scale)
+        coords[:, 1] *= float(molecule_xy_scale)
+    if molecule_z_scale != 1.0:
+        coords[:, 2] *= float(molecule_z_scale)
     min_step_dist = scene.metadata.get("step_exclusion_distance", 0.0)
     attempts = 0
     max_attempts = max(20, count * 40)
@@ -447,6 +456,102 @@ def add_molecules(
         scene.types = np.concatenate([scene.types, types])
         placed_count += 1
     _update_bbox(scene)
+
+
+def add_molecule_lattice(
+    scene: Scene,
+    molecule_name: str = "FePc",
+    grid_n: int = 3,
+    spacing: float = 15.0,
+    orientation_deg: float = 0.0,
+    lattice_angle_deg: float = 0.0,
+    height: float = 2.0,
+    rng=None,
+    random_center: bool = True,
+    spacing_range: Tuple[float, float] | None = None,
+    grid_range: Tuple[int, int] | None = None,
+    molecule_z_scale: float = 1.0,
+    molecule_xy_scale: float = 1.0,
+):
+    rng = ensure_rng(rng)
+    coords = load_molecule(molecule_name)
+    coords = coords - coords.mean(axis=0, keepdims=True)
+    if molecule_z_scale != 1.0 or molecule_xy_scale != 1.0:
+        coords = coords.copy()
+    if molecule_xy_scale != 1.0:
+        coords[:, 0] *= float(molecule_xy_scale)
+        coords[:, 1] *= float(molecule_xy_scale)
+    if molecule_z_scale != 1.0:
+        coords[:, 2] *= float(molecule_z_scale)
+
+    bbox = scene.metadata.get("surface_bbox", scene.bbox)
+    (xmin, xmax), (ymin, ymax) = bbox
+
+    if grid_range is not None:
+        gmin, gmax = int(grid_range[0]), int(grid_range[1])
+        grid_n = int(rng.integers(gmin, gmax + 1))
+    if spacing_range is not None:
+        spacing = float(rng.uniform(spacing_range[0], spacing_range[1]))
+
+    offsets = np.arange(grid_n, dtype=float) - (grid_n - 1) / 2.0
+
+    max_extent = max(abs(o) for o in offsets) * spacing
+    min_step_dist = scene.metadata.get("step_exclusion_distance", 0.0)
+
+    def choose_center():
+        if random_center:
+            cx = rng.uniform(xmin + max_extent, xmax - max_extent)
+            cy = rng.uniform(ymin + max_extent, ymax - max_extent)
+        else:
+            cx = (xmin + xmax) / 2.0
+            cy = (ymin + ymax) / 2.0
+        return cx, cy
+
+    for _ in range(100):
+        cx, cy = choose_center()
+        lat_rot = rotation_matrix_z(np.deg2rad(lattice_angle_deg))
+        centers = []
+        for i in offsets:
+            for j in offsets:
+                v = np.array([i * spacing, j * spacing, 0.0]) @ lat_rot.T
+                centers.append((cx + v[0], cy + v[1]))
+        centers = np.array(centers, dtype=float)
+        if (
+            centers[:, 0].min() < xmin
+            or centers[:, 0].max() > xmax
+            or centers[:, 1].min() < ymin
+            or centers[:, 1].max() > ymax
+        ):
+            continue
+        if min_step_dist > 0 and scene.step_edges:
+            d = _min_distance_to_steps(scene, centers)
+            if np.any(d < min_step_dist):
+                continue
+        break
+    else:
+        cx, cy = (xmin + xmax) / 2.0, (ymin + ymax) / 2.0
+        lat_rot = rotation_matrix_z(np.deg2rad(lattice_angle_deg))
+        centers = []
+        for i in offsets:
+            for j in offsets:
+                v = np.array([i * spacing, j * spacing, 0.0]) @ lat_rot.T
+                centers.append((cx + v[0], cy + v[1]))
+        centers = np.array(centers, dtype=float)
+
+    rot = rotation_matrix_z(np.deg2rad(orientation_deg))
+    placed = []
+    for (x0, y0) in centers:
+        mol = coords @ rot.T
+        surface_z = surface_height_at(scene, np.array([[x0, y0]]))[0]
+        z0 = surface_z + height
+        mol = mol + np.array([x0, y0, z0])
+        placed.append(mol)
+
+    if placed:
+        placed = np.vstack(placed)
+        scene.positions = np.vstack([scene.positions, placed])
+        scene.types = np.concatenate([scene.types, np.full((placed.shape[0],), "molecule", dtype=scene.types.dtype)])
+        _update_bbox(scene)
 
 
 def plot_scene_top_view(scene: Scene, ax=None, show: bool = False):
