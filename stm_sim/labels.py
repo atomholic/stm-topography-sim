@@ -43,4 +43,16 @@ def generate_mask(scene, pixels, label_cfg, bbox=None, blur_radius: float = 0.0)
     molecule_positions = scene.positions[scene.types == "molecule"]
     _mark_circle(mask, x, y, molecule_positions, label_cfg.molecule_radius + blur_radius, 3)
 
+    # adatom-on-YPc2: label the whole molecule footprint as class 6
+    adatom_on_ypc2 = np.array(scene.metadata.get("adatom_on_top_centers", []), dtype=float)
+    adatom_on_ypc2_radius = max(label_cfg.molecule_radius, label_cfg.adatom_on_ypc2_radius)
+    _mark_circle(
+        mask,
+        x,
+        y,
+        adatom_on_ypc2,
+        adatom_on_ypc2_radius + blur_radius,
+        6,
+    )
+
     return mask

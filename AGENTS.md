@@ -14,6 +14,9 @@ This repository implements a synthetic STM topography simulator to generate labe
   - Noise + tip instability models.
   - Semantic mask generator.
   - Dataset generator scripts.
+  - YPc2 ring-orbital LDOS model (center/plateau terms) with per-molecule orientation.
+  - Continuum surface LDOS mode (default) to remove atomic corrugation from substrate.
+  - Adatom-on-YPc2 lattice support with separate mask label (class 6).
 
 ### Units & Grid
 - Standardized lengths to **Angstroms ()** in config and geometry.
@@ -38,12 +41,16 @@ This repository implements a synthetic STM topography simulator to generate labe
 
 ### Masks
 - Masks now expand by the effective tip blur radius to align with blurred images.
+- Adatom-on-YPc2 molecules are labeled as class `6` (`adatom_on_ypc2`).
 
 ### New Notebook
 - `notebooks/FePc_Layer_Ag001.ipynb` creates a 20 nm Ag(100) scene with a 3x3 FePc layer (1.5 nm spacing), optional step, and shows 2D/3D + topography.
+- `notebooks/YPc2_LDOS_Demo.ipynb` compares YPc2 ring-orbital LDOS vs atom-based LDOS.
+- `notebooks/YPc2_Dataset_Generator.ipynb` runs `generate_ypc2_layer.py` with all options exposed as parameters.
 
 ### Dataset Scripts
 - `scripts/generate_fepc_layer.py` generates datasets of FePc layer images with optional randomized lattice spacing and grid size, TIFF outputs, and metadata.
+- `scripts/generate_ypc2_layer.py` generates YPc2 lattice datasets with LDOS and noise controls, adatom-on-top, and realism preset.
 - Colored TIFF quicklook outputs (inferno / tab20) if `tifffile` is installed.
 - Script auto-skips TIFF outputs if `tifffile` is not available.
 
@@ -57,12 +64,13 @@ This repository implements a synthetic STM topography simulator to generate labe
   cfg.features.molecule_z_scale = 1/3
   cfg.features.molecule_xy_scale = 1.0
   ```
+- Use `cfg.ldos.surface_mode = "atomic"` to restore atomic corrugation on the substrate.
 - Increase blur in  via `cfg.noise.tip_sigma`.
 - Fixed grid to surface size: set `cfg.surface.size_angstrom`.
 
 ## Known Files
 - Core code: `stm_sim/`
-- Notebooks: `notebooks/STM_Simulator_Demo.ipynb`, `notebooks/FePc_Layer_Ag001.ipynb`
+- Notebooks: `notebooks/STM_Simulator_Demo.ipynb`, `notebooks/FePc_Layer_Ag001.ipynb`, `notebooks/YPc2_LDOS_Demo.ipynb`, `notebooks/YPc2_Dataset_Generator.ipynb`
 - Molecules: `molecules/FePc.mol`, `molecules/YPc2.xyz`
-- Scripts: `scripts/generate_mvp.py`, `scripts/generate_fepc_layer.py`
+- Scripts: `scripts/generate_mvp.py`, `scripts/generate_fepc_layer.py`, `scripts/generate_ypc2_layer.py`
 

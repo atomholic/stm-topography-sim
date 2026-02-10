@@ -27,6 +27,11 @@ class FeatureConfig:
     # Height from local surface to molecule top (Å)
     molecule_height: float = 2.0
     molecule_height_sigma: float = 0.15
+    # Adatom-on-top for YPc2 lattice (count applies only to lattice placements)
+    ypc2_adatom_on_top_count: Tuple[int, int] = (0, 0)
+    ypc2_adatom_on_top_height: float = 2.0
+    ypc2_adatom_on_top_radial_offset: float = 0.0
+    ypc2_adatom_on_top_radial_jitter: float = 0.0
 
 
 @dataclass
@@ -42,6 +47,19 @@ class LDOSConfig:
     kappa_adatom: float = 1.0
     A_molecule: float = 0.8
     kappa_molecule: float = 1.1
+    # Surface LDOS mode: "continuum" (default) or "atomic"
+    surface_mode: str = "continuum"
+    # YPc2 ring-orbital LDOS parameters (Angstrom-based)
+    ypc2_r0: float = 1.8
+    ypc2_sig_r: float = 0.45
+    ypc2_ang_mix: float = 0.0
+    # Optional central lobe to lift the molecule center
+    ypc2_center_amp: float = 0.0
+    ypc2_center_kappa: float = 1.1
+    # Optional plateau term for YPc2 (soft disk)
+    ypc2_plateau_amp: float = 0.0
+    ypc2_plateau_radius: float = 5.0
+    ypc2_plateau_sigma: float = 0.8
 
 
 @dataclass
@@ -61,9 +79,19 @@ class NoiseConfig:
     line_noise_sigma: Tuple[float, float] = (0.0, 0.03)
     # Line-noise correlation length in Angstroms (Å)
     line_noise_corr: float = 8.0
+    # Low-frequency background variation (Angstroms)
+    background_sigma: Tuple[float, float] = (0.0, 0.0)
+    background_corr: float = 15.0
     drift_shear: Tuple[float, float] = (0.0, 0.02)
     height_jitter_sigma: Tuple[float, float] = (0.0, 0.02)
     tip_instability: Tuple[float, float] = (0.0, 0.6)
+    # Vibration-like sinusoidal noise (Angstroms)
+    vibration_amp: Tuple[float, float] = (0.0, 0.0)
+    vibration_wavelength: Tuple[float, float] = (8.0, 20.0)
+    vibration_angle_deg: Tuple[float, float] = (0.0, 180.0)
+    # Global slope in x/y (Angstroms across full image)
+    slope_x: Tuple[float, float] = (0.0, 0.0)
+    slope_y: Tuple[float, float] = (0.0, 0.0)
 
 
 @dataclass
@@ -72,6 +100,7 @@ class LabelConfig:
     molecule_radius: float = 1.5
     vacancy_radius: float = 1.2
     step_edge_width: float = 2.0
+    adatom_on_ypc2_radius: float = 1.2
 
 
 @dataclass

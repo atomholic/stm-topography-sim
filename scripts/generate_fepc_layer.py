@@ -52,8 +52,15 @@ def generate_sample(
     idx,
     spacing_range=None,
     grid_range=None,
+    orientation_range=None,
+    lattice_angle_range=None,
 ):
     scene = build_scene_from_config(cfg, rng)
+
+    if orientation_range is not None:
+        orientation_deg = float(rng.uniform(orientation_range[0], orientation_range[1]))
+    if lattice_angle_range is not None:
+        lattice_angle_deg = float(rng.uniform(lattice_angle_range[0], lattice_angle_range[1]))
 
     lattice_info = add_molecule_lattice(
         scene,
@@ -127,22 +134,41 @@ def main():
     parser.add_argument("--grid_range", type=int, nargs=2, default=None, help="Grid range min max")
     parser.add_argument("--grid", type=int, default=3, help="Grid size (NxN)")
     parser.add_argument("--orientation", type=float, default=0.0, help="Molecule orientation (deg)")
+    parser.add_argument(
+        "--orientation_range",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Orientation range min max (deg)",
+    )
     parser.add_argument("--lattice_angle", type=float, default=0.0, help="Lattice rotation (deg)")
+    parser.add_argument(
+        "--lattice_angle_range",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Lattice rotation range min max (deg)",
+    )
     args = parser.parse_args()
 
     cfg = SimulationConfig(seed=args.seed)
     cfg.surface.surface = "100"
-    cfg.surface.size_angstrom = (120.0, 120.0)
+    cfg.surface.size_angstrom = (200.0, 200.0)
     cfg.features.step_probability = 0.5
     cfg.features.step_height_layers = 1
     cfg.features.adatom_count = (1, 10)
     cfg.features.vacancy_count = (2, 4)
     cfg.features.molecule_count = (0, 1)
-    cfg.features.molecule_height = 2.0
+    cfg.features.molecule_height = 1.0
 
-    cfg.noise.tip_sigma = (2.0, 3.0)
+    cfg.noise.tip_sigma = (2.0, 3.0)         # lower = sharper tip
+    cfg.noise.tip_instability = (0.0, 0.2)   # lower = more stable
+    cfg.noise.height_jitter_sigma = (0.0, 0.01)
+    cfg.noise.line_noise_sigma = (0.0, 0.02)
+    cfg.noise.line_noise_corr = 8.0
     cfg.stm.cutoff = 5.0
     cfg.stm.solver_iters = 5
+
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -152,6 +178,12 @@ def main():
 
     spacing_range = tuple(args.spacing_range) if args.spacing_range is not None else None
     grid_range = tuple(args.grid_range) if args.grid_range is not None else None
+    orientation_range = (
+        tuple(args.orientation_range) if args.orientation_range is not None else None
+    )
+    lattice_angle_range = (
+        tuple(args.lattice_angle_range) if args.lattice_angle_range is not None else None
+    )
 
     for i in range(args.n):
         generate_sample(
@@ -165,6 +197,8 @@ def main():
             i,
             spacing_range=spacing_range,
             grid_range=grid_range,
+            orientation_range=orientation_range,
+            lattice_angle_range=lattice_angle_range,
         )
 
 

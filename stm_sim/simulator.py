@@ -40,6 +40,7 @@ def build_scene_from_config(cfg: SimulationConfig, rng: np.random.Generator):
         layers=cfg.surface.layers,
         lattice_constant=cfg.surface.lattice_constant,
     )
+    scene.metadata["molecule_name"] = cfg.features.molecule_name
 
     a_surf = float(scene.metadata.get("a_surf", 0.0))
     scene.metadata["step_exclusion_distance"] = cfg.features.step_exclusion_factor * a_surf

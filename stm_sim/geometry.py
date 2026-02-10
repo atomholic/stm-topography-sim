@@ -437,6 +437,8 @@ def add_molecules(
     attempts = 0
     max_attempts = max(20, count * 40)
     placed_count = 0
+    centers = []
+    orientations = []
     while placed_count < count and attempts < max_attempts:
         attempts += 1
         angle = rng.uniform(0.0, 2 * math.pi)
@@ -454,7 +456,12 @@ def add_molecules(
         types = np.full((placed.shape[0],), "molecule", dtype=scene.types.dtype)
         scene.positions = np.vstack([scene.positions, placed])
         scene.types = np.concatenate([scene.types, types])
+        centers.append([x, y, z])
+        orientations.append(math.degrees(angle))
         placed_count += 1
+    if centers:
+        scene.metadata.setdefault("molecule_centers", []).extend(centers)
+        scene.metadata.setdefault("molecule_orientations_deg", []).extend(orientations)
     _update_bbox(scene)
 
 
@@ -472,6 +479,10 @@ def add_molecule_lattice(
     grid_range: Tuple[int, int] | None = None,
     molecule_z_scale: float = 1.0,
     molecule_xy_scale: float = 1.0,
+    adatom_on_top_count: Tuple[int, int] | int | None = None,
+    adatom_on_top_height: float = 2.0,
+    adatom_on_top_radial_offset: float = 0.0,
+    adatom_on_top_radial_jitter: float = 0.0,
 ):
     rng = ensure_rng(rng)
     coords = load_molecule(molecule_name)
@@ -551,6 +562,37 @@ def add_molecule_lattice(
         placed = np.vstack(placed)
         scene.positions = np.vstack([scene.positions, placed])
         scene.types = np.concatenate([scene.types, np.full((placed.shape[0],), "molecule", dtype=scene.types.dtype)])
+        centers_with_z = [[float(x0), float(y0), float(surface_height_at(scene, np.array([[x0, y0]]))[0] + height)] for (x0, y0) in centers]
+        scene.metadata.setdefault("molecule_centers", []).extend(centers_with_z)
+        scene.metadata.setdefault("molecule_orientations_deg", []).extend([float(orientation_deg)] * len(centers))
+        if adatom_on_top_count is not None:
+            if isinstance(adatom_on_top_count, (tuple, list)) and len(adatom_on_top_count) == 2:
+                low, high = int(adatom_on_top_count[0]), int(adatom_on_top_count[1])
+                if high < low:
+                    low, high = high, low
+                count = int(rng.integers(low, high + 1))
+            else:
+                count = int(adatom_on_top_count)
+            count = max(0, min(count, len(centers_with_z)))
+            if count > 0:
+                idx = rng.choice(len(centers_with_z), size=count, replace=False)
+                adatom_positions = []
+                for i in idx:
+                    cx, cy, cz = centers_with_z[i]
+                    if adatom_on_top_radial_offset > 0 or adatom_on_top_radial_jitter > 0:
+                        angle = rng.uniform(0.0, 2 * math.pi)
+                        offset = float(adatom_on_top_radial_offset)
+                        if adatom_on_top_radial_jitter > 0:
+                            offset += rng.normal(0.0, float(adatom_on_top_radial_jitter))
+                        cx = cx + offset * math.cos(angle)
+                        cy = cy + offset * math.sin(angle)
+                    adatom_positions.append([cx, cy, cz + float(adatom_on_top_height)])
+                adatom_positions = np.array(adatom_positions, dtype=float)
+                scene.positions = np.vstack([scene.positions, adatom_positions])
+                scene.types = np.concatenate(
+                    [scene.types, np.full((adatom_positions.shape[0],), "adatom", dtype=scene.types.dtype)]
+                )
+                scene.metadata.setdefault("adatom_on_top_centers", []).extend([centers_with_z[i] for i in idx])
         _update_bbox(scene)
 
 
