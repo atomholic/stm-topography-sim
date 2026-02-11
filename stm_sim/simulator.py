@@ -5,6 +5,7 @@ from .config import SimulationConfig
 from .geometry import (
     add_adatoms,
     add_molecules,
+    add_corner_step,
     add_step,
     add_surface_roughness,
     add_vacancies,
@@ -49,12 +50,23 @@ def build_scene_from_config(cfg: SimulationConfig, rng: np.random.Generator):
         angle = None
         if cfg.features.step_angle_deg_range is not None:
             angle = sample_uniform(rng, cfg.features.step_angle_deg_range)
-        add_step(
-            scene,
-            rng=rng,
-            height_layers=cfg.features.step_height_layers,
-            angle_deg=angle,
-        )
+        if str(cfg.features.step_mode).lower() == "corner":
+            corner_angle = sample_uniform(rng, cfg.features.step_corner_angle_deg_range)
+            add_corner_step(
+                scene,
+                rng=rng,
+                height_layers=cfg.features.step_height_layers,
+                base_angle_deg=angle,
+                corner_angle_deg=corner_angle,
+                round_radius=cfg.features.step_corner_round_radius,
+            )
+        else:
+            add_step(
+                scene,
+                rng=rng,
+                height_layers=cfg.features.step_height_layers,
+                angle_deg=angle,
+            )
 
     adatom_count = sample_int(rng, cfg.features.adatom_count)
     add_adatoms(scene, adatom_count, rng=rng)

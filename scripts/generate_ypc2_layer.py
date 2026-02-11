@@ -55,6 +55,13 @@ def generate_sample(
     grid_range=None,
     orientation_range=None,
     lattice_angle_range=None,
+    island_count=None,
+    island_min_distance=None,
+    island_orientation_range=None,
+    island_lattice_angle_range=None,
+    edge_remove_count=None,
+    interior_remove_count=None,
+    edge_remove_edge_prob=None,
 ):
     scene = build_scene_from_config(cfg, rng)
 
@@ -81,6 +88,14 @@ def generate_sample(
         adatom_on_top_height=cfg.features.ypc2_adatom_on_top_height,
         adatom_on_top_radial_offset=cfg.features.ypc2_adatom_on_top_radial_offset,
         adatom_on_top_radial_jitter=cfg.features.ypc2_adatom_on_top_radial_jitter,
+        island_count=island_count,
+        island_min_distance=island_min_distance if island_min_distance is not None else cfg.features.lattice_island_min_distance,
+        island_orientation_range=island_orientation_range,
+        island_lattice_angle_range=island_lattice_angle_range,
+        edge_remove_count=edge_remove_count if edge_remove_count is not None else cfg.features.lattice_edge_remove_count,
+        interior_remove_count=interior_remove_count if interior_remove_count is not None else cfg.features.lattice_interior_remove_count,
+        edge_remove_edge_prob=edge_remove_edge_prob if edge_remove_edge_prob is not None else cfg.features.lattice_edge_remove_edge_prob,
+        orientation_relative_to_lattice=True,
     )
     if lattice_info is None:
         lattice_info = {"spacing": spacing, "grid_n": grid_n, "center": None}
@@ -102,14 +117,17 @@ def generate_sample(
     np.save(out_dir / f"mask_{idx:04d}.npy", mask.astype(np.int64))
 
     if _HAS_TIFF:
-        tifffile.imwrite(out_dir / f"image_{idx:04d}.tiff", image.astype(np.float32))
-        tifffile.imwrite(out_dir / f"mask_{idx:04d}.tiff", mask.astype(np.int64))
+        try:
+            tifffile.imwrite(str(out_dir / f"image_{idx:04d}.tiff"), image.astype(np.float32))
+            tifffile.imwrite(str(out_dir / f"mask_{idx:04d}.tiff"), mask.astype(np.int64))
 
-        # colored quick-look
-        image_rgb = apply_colormap(image, cmap_name="inferno")
-        mask_rgb = apply_colormap(mask.astype(float), cmap_name="tab20")
-        tifffile.imwrite(out_dir / f"image_{idx:04d}_color.tiff", image_rgb)
-        tifffile.imwrite(out_dir / f"mask_{idx:04d}_color.tiff", mask_rgb)
+            # colored quick-look
+            image_rgb = apply_colormap(image, cmap_name="inferno")
+            mask_rgb = apply_colormap(mask.astype(float), cmap_name="tab20")
+            tifffile.imwrite(str(out_dir / f"image_{idx:04d}_color.tiff"), image_rgb)
+            tifffile.imwrite(str(out_dir / f"mask_{idx:04d}_color.tiff"), mask_rgb)
+        except OSError as exc:
+            print(f"TIFF write failed for index {idx}: {exc}. Skipping TIFF outputs.")
 
     with open(out_dir / f"meta_{idx:04d}.json", "w", encoding="utf-8") as f:
         json.dump(
@@ -128,8 +146,6 @@ def generate_sample(
                     "r0": cfg.ldos.ypc2_r0,
                     "sig_r": cfg.ldos.ypc2_sig_r,
                     "ang_mix": cfg.ldos.ypc2_ang_mix,
-                    "center_amp": cfg.ldos.ypc2_center_amp,
-                    "center_kappa": cfg.ldos.ypc2_center_kappa,
                     "plateau_amp": cfg.ldos.ypc2_plateau_amp,
                     "plateau_radius": cfg.ldos.ypc2_plateau_radius,
                     "plateau_sigma": cfg.ldos.ypc2_plateau_sigma,
@@ -151,6 +167,13 @@ def main():
     parser.add_argument("--out", type=str, default="dataset_ypc2_layer", help="Output directory")
     parser.add_argument("--n", type=int, default=100, help="Number of samples")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed")
+    parser.add_argument(
+        "--surface_size",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Surface size in Angstroms: width height",
+    )
     parser.add_argument("--spacing", type=float, default=15.0, help="YPc2 lattice spacing (Å)")
     parser.add_argument("--spacing_range", type=float, nargs=2, default=None, help="Spacing range min max (Å)")
     parser.add_argument("--grid_range", type=int, nargs=2, default=None, help="Grid range min max")
@@ -174,23 +197,147 @@ def main():
     parser.add_argument("--ypc2_r0", type=float, default=None, help="YPc2 ring radius (Å)")
     parser.add_argument("--ypc2_sig_r", type=float, default=None, help="YPc2 ring thickness (Å)")
     parser.add_argument("--ypc2_ang_mix", type=float, default=None, help="YPc2 angular mix")
-    parser.add_argument("--ypc2_center_amp", type=float, default=None, help="YPc2 center amp")
-    parser.add_argument("--ypc2_center_kappa", type=float, default=None, help="YPc2 center kappa")
+    parser.add_argument("--ypc2_center_plateau_amp", type=float, default=None, help="YPc2 center plateau amp")
+    parser.add_argument("--ypc2_center_plateau_radius", type=float, default=None, help="YPc2 center plateau radius (?)")
+    parser.add_argument("--ypc2_center_plateau_sigma", type=float, default=None, help="YPc2 center plateau edge softness (?)")
     parser.add_argument("--adatom_count", type=int, nargs=2, default=None, help="Adatom count range min max")
     parser.add_argument("--vacancy_count", type=int, nargs=2, default=None, help="Vacancy count range min max")
     parser.add_argument("--molecule_count", type=int, nargs=2, default=None, help="Random molecule count range min max")
     parser.add_argument("--step_probability", type=float, default=None, help="Step probability (0-1)")
     parser.add_argument("--step_height_layers", type=int, default=None, help="Step height in layers")
+    parser.add_argument(
+        "--step_mode",
+        type=str,
+        default=None,
+        choices=["single", "corner"],
+        help="Step mode: single or corner",
+    )
+    parser.add_argument(
+        "--step_corner_angle_range",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Corner step angle range min max (deg)",
+    )
+    parser.add_argument(
+        "--step_corner_round_radius",
+        type=float,
+        default=None,
+        help="Corner rounding radius (Angstroms)",
+    )
     parser.add_argument("--roughness_sigma", type=float, default=None, help="Surface roughness sigma (Å)")
     parser.add_argument("--adatom_on_top", type=int, nargs=2, default=None, help="Adatom-on-top count range min max")
     parser.add_argument("--adatom_on_top_height", type=float, default=2.0, help="Adatom-on-top height (Å)")
     parser.add_argument("--adatom_on_top_offset", type=float, default=None, help="Adatom-on-top radial offset (Å)")
     parser.add_argument("--adatom_on_top_jitter", type=float, default=None, help="Adatom-on-top radial jitter (Å)")
+    parser.add_argument("--adatom_on_top_width", type=float, default=None, help="Adatom-on-top width (?)")
+    parser.add_argument(
+        "--island_count",
+        type=int,
+        nargs=2,
+        default=None,
+        help="Number of lattice islands range min max",
+    )
+    parser.add_argument(
+        "--island_min_distance",
+        type=float,
+        default=None,
+        help="Minimum distance between islands (Angstroms)",
+    )
+    parser.add_argument(
+        "--island_orientation_range",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Orientation range per island min max (deg)",
+    )
+    parser.add_argument(
+        "--island_lattice_angle_range",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Lattice angle range per island min max (deg)",
+    )
+    parser.add_argument(
+        "--edge_remove_count",
+        type=int,
+        nargs=2,
+        default=None,
+        help="Molecules removed near edges range min max",
+    )
+    parser.add_argument(
+        "--interior_remove_count",
+        type=int,
+        nargs=2,
+        default=None,
+        help="Molecules removed inside island range min max",
+    )
+    parser.add_argument(
+        "--edge_remove_edge_prob",
+        type=float,
+        default=None,
+        help="Probability to remove from edge vs interior for edge removal",
+    )
     parser.add_argument("--vibration_amp", type=float, nargs=2, default=None, help="Vibration amplitude range (Å)")
     parser.add_argument("--vibration_wavelength", type=float, nargs=2, default=None, help="Vibration wavelength range (Å)")
     parser.add_argument("--vibration_angle", type=float, nargs=2, default=None, help="Vibration angle range (deg)")
     parser.add_argument("--slope_x", type=float, nargs=2, default=None, help="Slope X range (Å across image)")
     parser.add_argument("--slope_y", type=float, nargs=2, default=None, help="Slope Y range (Å across image)")
+    parser.add_argument(
+        "--tip_sigma",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Tip blur sigma range min max (Angstroms)",
+    )
+    parser.add_argument(
+        "--tip_instability",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Tip instability range min max",
+    )
+    parser.add_argument(
+        "--tip_mode",
+        type=str,
+        default=None,
+        choices=["single", "multi"],
+        help="Tip mode: single or multi-tip",
+    )
+    parser.add_argument(
+        "--tip_count",
+        type=int,
+        nargs=2,
+        default=None,
+        help="Multi-tip count range min max",
+    )
+    parser.add_argument(
+        "--tip_offset_range",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Multi-tip radial offset range min max (Angstroms)",
+    )
+    parser.add_argument(
+        "--tip_z_range",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Multi-tip z offset range min max (Angstroms)",
+    )
+    parser.add_argument(
+        "--tip_weight_range",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Multi-tip weight range min max",
+    )
+    parser.add_argument(
+        "--tip_z_decay",
+        type=float,
+        default=None,
+        help="Multi-tip weight decay length in z (Angstroms)",
+    )
     parser.add_argument("--realistic", action="store_true", help="Apply realism preset tuned to STM appearance")
     args = parser.parse_args()
 
@@ -208,13 +355,15 @@ def main():
     cfg.features.ypc2_adatom_on_top_height = float(args.adatom_on_top_height)
     cfg.features.ypc2_adatom_on_top_radial_offset = 0.0
     cfg.features.ypc2_adatom_on_top_radial_jitter = 0.0
+    cfg.features.ypc2_adatom_on_top_width = 0.0
 
     cfg.ldos.A_molecule = 1.0
     cfg.ldos.ypc2_r0 = 5.8
     cfg.ldos.ypc2_sig_r = 1.75
     cfg.ldos.ypc2_ang_mix = 0.0
-    cfg.ldos.ypc2_center_amp = 1.2
-    cfg.ldos.ypc2_center_kappa = 3.0
+    cfg.ldos.ypc2_center_plateau_amp = 0.0
+    cfg.ldos.ypc2_center_plateau_radius = 2.0
+    cfg.ldos.ypc2_center_plateau_sigma = 0.6
 
     if args.ypc2_r0 is not None:
         cfg.ldos.ypc2_r0 = float(args.ypc2_r0)
@@ -222,10 +371,12 @@ def main():
         cfg.ldos.ypc2_sig_r = float(args.ypc2_sig_r)
     if args.ypc2_ang_mix is not None:
         cfg.ldos.ypc2_ang_mix = float(args.ypc2_ang_mix)
-    if args.ypc2_center_amp is not None:
-        cfg.ldos.ypc2_center_amp = float(args.ypc2_center_amp)
-    if args.ypc2_center_kappa is not None:
-        cfg.ldos.ypc2_center_kappa = float(args.ypc2_center_kappa)
+    if args.ypc2_center_plateau_amp is not None:
+        cfg.ldos.ypc2_center_plateau_amp = float(args.ypc2_center_plateau_amp)
+    if args.ypc2_center_plateau_radius is not None:
+        cfg.ldos.ypc2_center_plateau_radius = float(args.ypc2_center_plateau_radius)
+    if args.ypc2_center_plateau_sigma is not None:
+        cfg.ldos.ypc2_center_plateau_sigma = float(args.ypc2_center_plateau_sigma)
 
     if args.adatom_count is not None:
         cfg.features.adatom_count = (int(args.adatom_count[0]), int(args.adatom_count[1]))
@@ -239,14 +390,39 @@ def main():
         cfg.features.step_height_layers = int(args.step_height_layers)
     if args.roughness_sigma is not None:
         cfg.features.roughness_sigma = float(args.roughness_sigma)
+    if args.surface_size is not None:
+        cfg.surface.size_angstrom = (float(args.surface_size[0]), float(args.surface_size[1]))
 
+    if args.step_mode is not None:
+        cfg.features.step_mode = str(args.step_mode)
+    if args.step_corner_angle_range is not None:
+        cfg.features.step_corner_angle_deg_range = (
+            float(args.step_corner_angle_range[0]),
+            float(args.step_corner_angle_range[1]),
+        )
+    if args.step_corner_round_radius is not None:
+        cfg.features.step_corner_round_radius = float(args.step_corner_round_radius)
     if args.adatom_on_top is not None:
         cfg.features.ypc2_adatom_on_top_count = (int(args.adatom_on_top[0]), int(args.adatom_on_top[1]))
     if args.adatom_on_top_offset is not None:
         cfg.features.ypc2_adatom_on_top_radial_offset = float(args.adatom_on_top_offset)
     if args.adatom_on_top_jitter is not None:
         cfg.features.ypc2_adatom_on_top_radial_jitter = float(args.adatom_on_top_jitter)
+    if args.adatom_on_top_width is not None:
+        cfg.features.ypc2_adatom_on_top_width = float(args.adatom_on_top_width)
 
+    if args.island_count is not None:
+        cfg.features.lattice_island_count = (int(args.island_count[0]), int(args.island_count[1]))
+    if args.island_min_distance is not None:
+        cfg.features.lattice_island_min_distance = float(args.island_min_distance)
+    if args.edge_remove_count is not None:
+        cfg.features.lattice_edge_remove_count = (int(args.edge_remove_count[0]), int(args.edge_remove_count[1]))
+    if args.interior_remove_count is not None:
+        cfg.features.lattice_interior_remove_count = (
+            int(args.interior_remove_count[0]), int(args.interior_remove_count[1])
+        )
+    if args.edge_remove_edge_prob is not None:
+        cfg.features.lattice_edge_remove_edge_prob = float(args.edge_remove_edge_prob)
     cfg.noise.tip_sigma = (0.5, 1.2)
     cfg.noise.gaussian_noise_sigma = (0.0, 0.0)
     cfg.noise.line_noise_sigma = (0.0, 0.0)
@@ -300,6 +476,22 @@ def main():
         cfg.features.ypc2_adatom_on_top_radial_offset = 4.5
         cfg.features.ypc2_adatom_on_top_radial_jitter = 0.6
 
+    if args.tip_mode is not None:
+        cfg.noise.tip_mode = str(args.tip_mode)
+    if args.tip_sigma is not None:
+        cfg.noise.tip_sigma = (float(args.tip_sigma[0]), float(args.tip_sigma[1]))
+    if args.tip_instability is not None:
+        cfg.noise.tip_instability = (float(args.tip_instability[0]), float(args.tip_instability[1]))
+    if args.tip_count is not None:
+        cfg.noise.tip_count = (int(args.tip_count[0]), int(args.tip_count[1]))
+    if args.tip_offset_range is not None:
+        cfg.noise.tip_offset_range = (float(args.tip_offset_range[0]), float(args.tip_offset_range[1]))
+    if args.tip_z_range is not None:
+        cfg.noise.tip_z_range = (float(args.tip_z_range[0]), float(args.tip_z_range[1]))
+    if args.tip_weight_range is not None:
+        cfg.noise.tip_weight_range = (float(args.tip_weight_range[0]), float(args.tip_weight_range[1]))
+    if args.tip_z_decay is not None:
+        cfg.noise.tip_z_decay = float(args.tip_z_decay)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     if not _HAS_TIFF:
@@ -329,6 +521,13 @@ def main():
             grid_range=grid_range,
             orientation_range=orientation_range,
             lattice_angle_range=lattice_angle_range,
+            island_count=tuple(args.island_count) if args.island_count is not None else cfg.features.lattice_island_count,
+            island_min_distance=cfg.features.lattice_island_min_distance,
+            island_orientation_range=tuple(args.island_orientation_range) if args.island_orientation_range is not None else None,
+            island_lattice_angle_range=tuple(args.island_lattice_angle_range) if args.island_lattice_angle_range is not None else None,
+            edge_remove_count=cfg.features.lattice_edge_remove_count,
+            interior_remove_count=cfg.features.lattice_interior_remove_count,
+            edge_remove_edge_prob=cfg.features.lattice_edge_remove_edge_prob,
         )
 
 

@@ -109,6 +109,40 @@ def apply_tip_instability(image: np.ndarray, strength: float, rng) -> np.ndarray
     return out
 
 
+def _shift_image(image: np.ndarray, dx: float, dy: float) -> np.ndarray:
+    if dx == 0 and dy == 0:
+        return image
+    ix = int(np.floor(dx))
+    iy = int(np.floor(dy))
+    fx = dx - ix
+    fy = dy - iy
+
+    base = np.roll(image, shift=(iy, ix), axis=(0, 1))
+    if fx == 0 and fy == 0:
+        return base
+
+    base_x = np.roll(image, shift=(iy, ix + 1), axis=(0, 1))
+    base_y = np.roll(image, shift=(iy + 1, ix), axis=(0, 1))
+    base_xy = np.roll(image, shift=(iy + 1, ix + 1), axis=(0, 1))
+
+    w00 = (1.0 - fx) * (1.0 - fy)
+    w10 = fx * (1.0 - fy)
+    w01 = (1.0 - fx) * fy
+    w11 = fx * fy
+    return w00 * base + w10 * base_x + w01 * base_y + w11 * base_xy
+
+
+def _sample_radial_offset(rng, offset_range):
+    if offset_range is None:
+        return 0.0, 0.0
+    if isinstance(offset_range, (tuple, list)) and len(offset_range) == 2:
+        r = float(rng.uniform(offset_range[0], offset_range[1]))
+    else:
+        r = float(offset_range)
+    angle = rng.uniform(0.0, 2.0 * np.pi)
+    return r * np.cos(angle), r * np.sin(angle)
+
+
 def _sigma_to_pixels(sigma_angstrom: float, pixel_size: tuple[float, float] | None) -> float:
     if pixel_size is None:
         return sigma_angstrom
@@ -132,8 +166,61 @@ def apply_noise(image: np.ndarray, noise_cfg, rng, pixel_size: tuple[float, floa
     slope_x = sample_uniform(rng, noise_cfg.slope_x)
     slope_y = sample_uniform(rng, noise_cfg.slope_y)
 
-    tip_sigma_px = _sigma_to_pixels(float(tip_sigma), pixel_size)
-    out = gaussian_blur(image, tip_sigma_px)
+    tip_mode = str(getattr(noise_cfg, "tip_mode", "single")).lower()
+    if tip_mode == "multi":
+        count_spec = getattr(noise_cfg, "tip_count", (2, 3))
+        if isinstance(count_spec, (tuple, list)) and len(count_spec) == 2:
+            n_tips = int(rng.integers(int(count_spec[0]), int(count_spec[1]) + 1))
+        else:
+            n_tips = int(count_spec)
+        n_tips = max(1, n_tips)
+
+        weights = []
+        shifts = []
+        sigmas = []
+        z_decay = float(getattr(noise_cfg, "tip_z_decay", 1.0))
+        weight_spec = getattr(noise_cfg, "tip_weight_range", (0.0, 0.7))
+        offset_spec = getattr(noise_cfg, "tip_offset_range", (0.0, 1.0))
+        z_spec = getattr(noise_cfg, "tip_z_range", (0.0, 1.0))
+
+        for i in range(n_tips):
+            if i == 0:
+                dx_a, dy_a = 0.0, 0.0
+                dz = 0.0
+                w = 1.0
+            else:
+                dx_a, dy_a = _sample_radial_offset(rng, offset_spec)
+                dz = sample_uniform(rng, z_spec)
+                if isinstance(weight_spec, (tuple, list)) and len(weight_spec) == 2:
+                    w = float(rng.uniform(weight_spec[0], weight_spec[1]))
+                else:
+                    w = float(weight_spec)
+                w *= float(np.exp(-abs(float(dz)) / max(1e-6, z_decay)))
+
+            if pixel_size is None:
+                dx_px, dy_px = dx_a, dy_a
+            else:
+                dx_px = dx_a / max(1e-9, float(pixel_size[0]))
+                dy_px = dy_a / max(1e-9, float(pixel_size[1]))
+
+            sigma_i = sample_uniform(rng, noise_cfg.tip_sigma)
+            sigmas.append(float(sigma_i))
+            shifts.append((dx_px, dy_px))
+            weights.append(w)
+
+        out = np.zeros_like(image)
+        weight_sum = 0.0
+        for (dx_px, dy_px), w, sigma_i in zip(shifts, weights, sigmas):
+            sigma_px = _sigma_to_pixels(float(sigma_i), pixel_size)
+            blurred = gaussian_blur(image, sigma_px)
+            out += _shift_image(blurred, dx_px, dy_px) * w
+            weight_sum += w
+        if weight_sum > 0:
+            out /= weight_sum
+    else:
+        tip_sigma_px = _sigma_to_pixels(float(tip_sigma), pixel_size)
+        out = gaussian_blur(image, tip_sigma_px)
+
     out = add_gaussian_noise(out, gaussian_sigma, rng)
     corr_px = noise_cfg.line_noise_corr
     if pixel_size is not None:

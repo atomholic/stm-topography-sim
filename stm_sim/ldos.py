@@ -57,8 +57,9 @@ def compute_ypc2_rho_grid(
     ang_mix = float(cfg.ypc2_ang_mix)
     kappa = float(cfg.kappa_molecule)
     amp = float(cfg.A_molecule) ** 2
-    center_amp = float(cfg.ypc2_center_amp)
-    center_kappa = float(cfg.ypc2_center_kappa)
+    center_plateau_amp = float(getattr(cfg, "ypc2_center_plateau_amp", 0.0))
+    center_plateau_radius = float(getattr(cfg, "ypc2_center_plateau_radius", 2.0))
+    center_plateau_sigma = float(getattr(cfg, "ypc2_center_plateau_sigma", 0.6))
     plateau_amp = float(cfg.ypc2_plateau_amp)
     plateau_radius = float(cfg.ypc2_plateau_radius)
     plateau_sigma = float(cfg.ypc2_plateau_sigma)
@@ -100,8 +101,11 @@ def compute_ypc2_rho_grid(
 
         dz = np.maximum(0.0, z - cz)
         rho += amp * rho_xy * np.exp(-2.0 * kappa * dz)
-        if center_amp > 0.0:
-            r3d = np.sqrt(r * r + dz * dz)
-            rho += (center_amp * center_amp) * np.exp(-2.0 * center_kappa * r3d)
+        if center_plateau_amp > 0.0:
+            if center_plateau_sigma <= 0:
+                plateau = (r <= center_plateau_radius).astype(float)
+            else:
+                plateau = 1.0 / (1.0 + np.exp((r - center_plateau_radius) / center_plateau_sigma))
+            rho += (center_plateau_amp * center_plateau_amp) * plateau * np.exp(-2.0 * kappa * dz)
 
     return rho

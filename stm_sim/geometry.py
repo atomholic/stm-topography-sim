@@ -68,7 +68,20 @@ def surface_height_at(scene: Scene, xy: np.ndarray) -> np.ndarray:
         normal = _normalize(normal)
         point = np.array(edge.get("point", [0.0, 0.0]), dtype=float)
         side = (xy - point) @ normal
-        z = np.where(side <= 0, z - height, z)
+        corner_point = edge.get("corner_point")
+        corner_radius = float(edge.get("corner_radius", 0.0) or 0.0)
+        if corner_point is not None and corner_radius > 0:
+            cp = np.array(corner_point, dtype=float)
+            dx = xy[:, 0] - cp[0]
+            dy = xy[:, 1] - cp[1]
+            dist = np.sqrt(dx * dx + dy * dy)
+            mask_round = dist <= corner_radius
+            t_round = 0.5 * (1.0 - np.clip(side / corner_radius, -1.0, 1.0))
+            t_sharp = (side <= 0).astype(float)
+            t = np.where(mask_round, t_round, t_sharp)
+            z = z - height * t
+        else:
+            z = np.where(side <= 0, z - height, z)
     return z
 
 
@@ -325,6 +338,93 @@ def add_step(
     _update_bbox(scene)
 
 
+def add_corner_step(
+    scene: Scene,
+    rng=None,
+    height_layers: int = 1,
+    base_angle_deg: float | None = None,
+    corner_angle_deg: float | None = None,
+    corner_point: Tuple[float, float] | None = None,
+    round_radius: float = 0.0,
+):
+    rng = ensure_rng(rng)
+    if height_layers <= 0:
+        return
+
+    surface_mask = scene.types == "surface"
+    if not np.any(surface_mask):
+        return
+
+    if base_angle_deg is None:
+        base_angle_deg = float(rng.uniform(0.0, 180.0))
+    if corner_angle_deg is None:
+        corner_angle_deg = float(rng.uniform(60.0, 120.0))
+
+    theta1 = math.radians(float(base_angle_deg))
+    theta2 = math.radians(float(base_angle_deg) + float(corner_angle_deg))
+    normal1 = _normalize(np.array([math.cos(theta1), math.sin(theta1)], dtype=float))
+    normal2 = _normalize(np.array([math.cos(theta2), math.sin(theta2)], dtype=float))
+
+    if corner_point is None:
+        x0 = rng.uniform(scene.bbox[0][0], scene.bbox[0][1])
+        y0 = rng.uniform(scene.bbox[1][0], scene.bbox[1][1])
+        point = np.array([x0, y0], dtype=float)
+    else:
+        point = np.array([float(corner_point[0]), float(corner_point[1])], dtype=float)
+
+    tol = 1e-3
+    top_z = float(scene.positions[surface_mask, 2].max())
+    top_mask = surface_mask & np.isclose(scene.positions[:, 2], top_z, atol=tol)
+
+    xy = scene.positions[:, :2]
+    side1 = (xy - point) @ normal1 > 0
+    side2 = (xy - point) @ normal2 > 0
+    raised_mask = side1 & side2
+
+    # remove any lower-layer surface atoms on the raised corner
+    lower_mask = surface_mask & raised_mask & (scene.positions[:, 2] < top_z - tol)
+    if np.any(lower_mask):
+        keep_mask = ~lower_mask
+        scene.positions = scene.positions[keep_mask]
+        scene.types = scene.types[keep_mask]
+        surface_mask = scene.types == "surface"
+        top_z = float(scene.positions[surface_mask, 2].max())
+        top_mask = surface_mask & np.isclose(scene.positions[:, 2], top_z, atol=tol)
+        xy = scene.positions[:, :2]
+        side1 = (xy - point) @ normal1 > 0
+        side2 = (xy - point) @ normal2 > 0
+        raised_mask = side1 & side2
+
+    height = height_layers * scene.layer_spacing
+    scene.positions[top_mask & raised_mask, 2] += height
+
+    edge_common = {
+        "height": float(height),
+        "point": point.tolist(),
+        "corner_point": point.tolist(),
+        "corner_radius": float(round_radius),
+    }
+    scene.step_edges.append(
+        {
+            "axis": "corner",
+            "position": None,
+            "normal": normal1.tolist(),
+            "angle_deg": float(base_angle_deg),
+            **edge_common,
+        }
+    )
+    scene.step_edges.append(
+        {
+            "axis": "corner",
+            "position": None,
+            "normal": normal2.tolist(),
+            "angle_deg": float(base_angle_deg + float(corner_angle_deg)),
+            **edge_common,
+        }
+    )
+    _update_bbox(scene)
+
+
 def add_surface_roughness(scene: Scene, sigma: float, rng=None):
     if sigma <= 0:
         return
@@ -483,6 +583,15 @@ def add_molecule_lattice(
     adatom_on_top_height: float = 2.0,
     adatom_on_top_radial_offset: float = 0.0,
     adatom_on_top_radial_jitter: float = 0.0,
+    adatom_on_top_width: float = 0.0,
+    island_count: Tuple[int, int] | int | None = None,
+    island_min_distance: float = 1.0,
+    island_orientation_range: Tuple[float, float] | None = None,
+    island_lattice_angle_range: Tuple[float, float] | None = None,
+    edge_remove_count: Tuple[int, int] | int | None = None,
+    interior_remove_count: Tuple[int, int] | int | None = None,
+    edge_remove_edge_prob: float = 0.9,
+    orientation_relative_to_lattice: bool = False,
 ):
     rng = ensure_rng(rng)
     coords = load_molecule(molecule_name)
@@ -498,19 +607,37 @@ def add_molecule_lattice(
     bbox = scene.metadata.get("surface_bbox", scene.bbox)
     (xmin, xmax), (ymin, ymax) = bbox
 
-    if grid_range is not None:
-        gmin, gmax = int(grid_range[0]), int(grid_range[1])
-        grid_n = int(rng.integers(gmin, gmax + 1))
-    if spacing_range is not None:
-        spacing = float(rng.uniform(spacing_range[0], spacing_range[1]))
-
-    offsets = np.arange(grid_n, dtype=float) - (grid_n - 1) / 2.0
-
-    max_extent = max(abs(o) for o in offsets) * spacing
     min_step_dist = scene.metadata.get("step_exclusion_distance", 0.0)
+    existing_island_bboxes = []
 
-    def choose_center():
+    def sample_grid_and_spacing():
+        local_grid_n = grid_n
+        local_spacing = spacing
+        if grid_range is not None:
+            gmin, gmax = int(grid_range[0]), int(grid_range[1])
+            local_grid_n = int(rng.integers(gmin, gmax + 1))
+        if spacing_range is not None:
+            local_spacing = float(rng.uniform(spacing_range[0], spacing_range[1]))
+        return local_grid_n, local_spacing
+
+    def sample_orientation(local_lattice_angle: float):
+        if island_orientation_range is not None:
+            base = float(rng.uniform(island_orientation_range[0], island_orientation_range[1]))
+        else:
+            base = float(orientation_deg)
+        if orientation_relative_to_lattice:
+            return base + float(local_lattice_angle)
+        return base
+
+    def sample_lattice_angle():
+        if island_lattice_angle_range is not None:
+            return float(rng.uniform(island_lattice_angle_range[0], island_lattice_angle_range[1]))
+        return float(lattice_angle_deg)
+
+    def choose_center(max_extent):
         if random_center:
+            if xmax - xmin < 2.0 * max_extent or ymax - ymin < 2.0 * max_extent:
+                return None
             cx = rng.uniform(xmin + max_extent, xmax - max_extent)
             cy = rng.uniform(ymin + max_extent, ymax - max_extent)
         else:
@@ -518,81 +645,198 @@ def add_molecule_lattice(
             cy = (ymin + ymax) / 2.0
         return cx, cy
 
-    for _ in range(100):
-        cx, cy = choose_center()
-        lat_rot = rotation_matrix_z(np.deg2rad(lattice_angle_deg))
-        centers = []
-        for i in offsets:
-            for j in offsets:
-                v = np.array([i * spacing, j * spacing, 0.0]) @ lat_rot.T
-                centers.append((cx + v[0], cy + v[1]))
-        centers = np.array(centers, dtype=float)
-        if (
-            centers[:, 0].min() < xmin
-            or centers[:, 0].max() > xmax
-            or centers[:, 1].min() < ymin
-            or centers[:, 1].max() > ymax
-        ):
-            continue
-        if min_step_dist > 0 and scene.step_edges:
-            d = _min_distance_to_steps(scene, centers)
-            if np.any(d < min_step_dist):
+    def island_bbox_for(center, max_extent):
+        cx, cy = center
+        return (cx - max_extent, cx + max_extent, cy - max_extent, cy + max_extent)
+
+    def overlaps_existing(bbox_new):
+        if not existing_island_bboxes:
+            return False
+        for (x0, x1, y0, y1) in existing_island_bboxes:
+            if (
+                bbox_new[0] <= x1 + island_min_distance
+                and bbox_new[1] >= x0 - island_min_distance
+                and bbox_new[2] <= y1 + island_min_distance
+                and bbox_new[3] >= y0 - island_min_distance
+            ):
+                return True
+        return False
+
+    def build_centers(local_grid_n, local_spacing, local_lattice_angle):
+        offsets = np.arange(local_grid_n, dtype=float) - (local_grid_n - 1) / 2.0
+        max_extent = max(abs(o) for o in offsets) * local_spacing if local_grid_n > 0 else 0.0
+        lat_rot = rotation_matrix_z(np.deg2rad(local_lattice_angle))
+
+        for _ in range(100):
+            center = choose_center(max_extent)
+            if center is None:
+                return None, None, None, None
+            cx, cy = center
+            centers = []
+            grid_indices = []
+            for i in range(local_grid_n):
+                for j in range(local_grid_n):
+                    v = np.array([offsets[i] * local_spacing, offsets[j] * local_spacing, 0.0]) @ lat_rot.T
+                    centers.append((cx + v[0], cy + v[1]))
+                    grid_indices.append((i, j))
+            centers = np.array(centers, dtype=float)
+            if (
+                centers[:, 0].min() < xmin
+                or centers[:, 0].max() > xmax
+                or centers[:, 1].min() < ymin
+                or centers[:, 1].max() > ymax
+            ):
                 continue
-        break
+            if min_step_dist > 0 and scene.step_edges:
+                d = _min_distance_to_steps(scene, centers)
+                if np.any(d < min_step_dist):
+                    continue
+            bbox_new = island_bbox_for((cx, cy), max_extent)
+            if overlaps_existing(bbox_new):
+                continue
+            return centers, grid_indices, (cx, cy), max_extent
+        return None, None, None, None
+
+    def sample_count(spec):
+        if spec is None:
+            return 0
+        if isinstance(spec, (tuple, list)) and len(spec) == 2:
+            low, high = int(spec[0]), int(spec[1])
+            if high < low:
+                low, high = high, low
+            return int(rng.integers(low, high + 1))
+        return int(spec)
+
+    def apply_removals(centers, grid_indices, local_grid_n):
+        if centers is None or len(centers) == 0:
+            return centers, 0, 0
+        edge_idx = [k for k, (i, j) in enumerate(grid_indices) if i == 0 or j == 0 or i == local_grid_n - 1 or j == local_grid_n - 1]
+        interior_idx = [k for k in range(len(grid_indices)) if k not in edge_idx]
+        remove_set = set()
+
+        edge_remove = sample_count(edge_remove_count)
+        interior_remove = sample_count(interior_remove_count)
+
+        for _ in range(edge_remove):
+            use_edge = rng.random() < edge_remove_edge_prob
+            pool = edge_idx if use_edge else interior_idx
+            pool = [idx for idx in pool if idx not in remove_set]
+            if not pool:
+                continue
+            pick = int(rng.choice(pool))
+            remove_set.add(pick)
+
+        if interior_remove > 0:
+            pool = [idx for idx in interior_idx if idx not in remove_set]
+            if pool:
+                count = min(interior_remove, len(pool))
+                picks = rng.choice(pool, size=count, replace=False)
+                for pick in picks.tolist():
+                    remove_set.add(int(pick))
+
+        if remove_set:
+            keep = [i for i in range(len(centers)) if i not in remove_set]
+            centers = centers[keep]
+        return centers, edge_remove, interior_remove
+
+    if island_count is None:
+        island_total = 1
     else:
-        cx, cy = (xmin + xmax) / 2.0, (ymin + ymax) / 2.0
-        lat_rot = rotation_matrix_z(np.deg2rad(lattice_angle_deg))
-        centers = []
-        for i in offsets:
-            for j in offsets:
-                v = np.array([i * spacing, j * spacing, 0.0]) @ lat_rot.T
-                centers.append((cx + v[0], cy + v[1]))
-        centers = np.array(centers, dtype=float)
+        island_total = sample_count(island_count)
+    island_total = max(1, island_total)
 
-    rot = rotation_matrix_z(np.deg2rad(orientation_deg))
-    placed = []
-    for (x0, y0) in centers:
-        mol = coords @ rot.T
-        surface_z = surface_height_at(scene, np.array([[x0, y0]]))[0]
-        z0 = surface_z + height
-        mol = mol + np.array([x0, y0, z0])
-        placed.append(mol)
+    for _ in range(island_total):
+        local_grid_n, local_spacing = sample_grid_and_spacing()
+        local_lattice_angle = sample_lattice_angle()
+        local_orientation = sample_orientation(local_lattice_angle)
 
-    if placed:
-        placed = np.vstack(placed)
-        scene.positions = np.vstack([scene.positions, placed])
-        scene.types = np.concatenate([scene.types, np.full((placed.shape[0],), "molecule", dtype=scene.types.dtype)])
-        centers_with_z = [[float(x0), float(y0), float(surface_height_at(scene, np.array([[x0, y0]]))[0] + height)] for (x0, y0) in centers]
-        scene.metadata.setdefault("molecule_centers", []).extend(centers_with_z)
-        scene.metadata.setdefault("molecule_orientations_deg", []).extend([float(orientation_deg)] * len(centers))
-        if adatom_on_top_count is not None:
-            if isinstance(adatom_on_top_count, (tuple, list)) and len(adatom_on_top_count) == 2:
-                low, high = int(adatom_on_top_count[0]), int(adatom_on_top_count[1])
-                if high < low:
-                    low, high = high, low
-                count = int(rng.integers(low, high + 1))
-            else:
-                count = int(adatom_on_top_count)
-            count = max(0, min(count, len(centers_with_z)))
-            if count > 0:
-                idx = rng.choice(len(centers_with_z), size=count, replace=False)
-                adatom_positions = []
-                for i in idx:
-                    cx, cy, cz = centers_with_z[i]
-                    if adatom_on_top_radial_offset > 0 or adatom_on_top_radial_jitter > 0:
-                        angle = rng.uniform(0.0, 2 * math.pi)
-                        offset = float(adatom_on_top_radial_offset)
-                        if adatom_on_top_radial_jitter > 0:
-                            offset += rng.normal(0.0, float(adatom_on_top_radial_jitter))
-                        cx = cx + offset * math.cos(angle)
-                        cy = cy + offset * math.sin(angle)
-                    adatom_positions.append([cx, cy, cz + float(adatom_on_top_height)])
-                adatom_positions = np.array(adatom_positions, dtype=float)
-                scene.positions = np.vstack([scene.positions, adatom_positions])
-                scene.types = np.concatenate(
-                    [scene.types, np.full((adatom_positions.shape[0],), "adatom", dtype=scene.types.dtype)]
-                )
-                scene.metadata.setdefault("adatom_on_top_centers", []).extend([centers_with_z[i] for i in idx])
+        centers, grid_indices, center_xy, max_extent = build_centers(
+            local_grid_n, local_spacing, local_lattice_angle
+        )
+        if centers is None:
+            continue
+
+        centers, edge_removed, interior_removed = apply_removals(centers, grid_indices, local_grid_n)
+        if centers is None or len(centers) == 0:
+            continue
+
+        bbox_new = island_bbox_for(center_xy, max_extent)
+        existing_island_bboxes.append(bbox_new)
+
+        rot = rotation_matrix_z(np.deg2rad(local_orientation))
+        placed = []
+        centers_with_z = []
+        for (x0, y0) in centers:
+            mol = coords @ rot.T
+            surface_z = surface_height_at(scene, np.array([[x0, y0]]))[0]
+            z0 = surface_z + height
+            mol = mol + np.array([x0, y0, z0])
+            placed.append(mol)
+            centers_with_z.append([float(x0), float(y0), float(z0)])
+
+        if placed:
+            placed = np.vstack(placed)
+            scene.positions = np.vstack([scene.positions, placed])
+            scene.types = np.concatenate(
+                [scene.types, np.full((placed.shape[0],), "molecule", dtype=scene.types.dtype)]
+            )
+            scene.metadata.setdefault("molecule_centers", []).extend(centers_with_z)
+            scene.metadata.setdefault("molecule_orientations_deg", []).extend(
+                [float(local_orientation)] * len(centers_with_z)
+            )
+            scene.metadata.setdefault("lattice_islands", []).append(
+                {
+                    "center": [float(center_xy[0]), float(center_xy[1])],
+                    "grid_n": int(local_grid_n),
+                    "spacing": float(local_spacing),
+                    "orientation_deg": float(local_orientation),
+                    "lattice_angle_deg": float(local_lattice_angle),
+                    "edge_removed": int(edge_removed),
+                    "interior_removed": int(interior_removed),
+                }
+            )
+
+            if adatom_on_top_count is not None:
+                count = sample_count(adatom_on_top_count)
+                count = max(0, min(count, len(centers_with_z)))
+                if count > 0:
+                    idx = rng.choice(len(centers_with_z), size=count, replace=False)
+                    adatom_positions = []
+                    width = float(adatom_on_top_width)
+                    ring_radius = 0.5 * width if width > 0 else 0.0
+                    ring_fracs = [0.33, 0.66, 1.0] if ring_radius > 0 else []
+                    for i in idx:
+                        cx, cy, cz = centers_with_z[int(i)]
+                        if adatom_on_top_radial_offset > 0 or adatom_on_top_radial_jitter > 0:
+                            angle = rng.uniform(0.0, 2 * math.pi)
+                            offset = float(adatom_on_top_radial_offset)
+                            if adatom_on_top_radial_jitter > 0:
+                                offset += rng.normal(0.0, float(adatom_on_top_radial_jitter))
+                            cx = cx + offset * math.cos(angle)
+                            cy = cy + offset * math.sin(angle)
+                        adatom_positions.append([cx, cy, cz + float(adatom_on_top_height)])
+                        if ring_fracs:
+                            for frac in ring_fracs:
+                                rr = ring_radius * frac
+                                if rr <= 0:
+                                    continue
+                                ring_points = int(max(8, min(48, (2 * math.pi * rr) / 2.0)))
+                                for k in range(ring_points):
+                                    ang = 2.0 * math.pi * k / ring_points
+                                    adatom_positions.append(
+                                        [cx + rr * math.cos(ang), cy + rr * math.sin(ang), cz + float(adatom_on_top_height)]
+                                    )
+                    adatom_positions = np.array(adatom_positions, dtype=float)
+                    scene.positions = np.vstack([scene.positions, adatom_positions])
+                    scene.types = np.concatenate(
+                        [scene.types, np.full((adatom_positions.shape[0],), "adatom", dtype=scene.types.dtype)]
+                    )
+                    scene.metadata.setdefault("adatom_on_top_centers", []).extend(
+                        [centers_with_z[int(i)] for i in idx]
+                    )
+                    if width > 0:
+                        scene.metadata["adatom_on_top_width"] = float(width)
+
         _update_bbox(scene)
 
 

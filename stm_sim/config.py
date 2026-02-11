@@ -19,6 +19,9 @@ class FeatureConfig:
     step_height_layers: int = 1
     step_angle_deg_range: Tuple[float, float] = (0.0, 180.0)
     step_exclusion_factor: float = 1.0
+    step_mode: str = "single"
+    step_corner_angle_deg_range: Tuple[float, float] = (60.0, 120.0)
+    step_corner_round_radius: float = 0.0
     roughness_sigma: float = 0.02
     molecule_count: Tuple[int, int] = (0, 2)
     molecule_name: str = "FePc"
@@ -32,6 +35,12 @@ class FeatureConfig:
     ypc2_adatom_on_top_height: float = 2.0
     ypc2_adatom_on_top_radial_offset: float = 0.0
     ypc2_adatom_on_top_radial_jitter: float = 0.0
+    ypc2_adatom_on_top_width: float = 0.0
+    lattice_island_count: Tuple[int, int] = (1, 1)
+    lattice_island_min_distance: float = 1.0
+    lattice_edge_remove_count: Tuple[int, int] | int | None = None
+    lattice_interior_remove_count: Tuple[int, int] | int | None = None
+    lattice_edge_remove_edge_prob: float = 0.9
 
 
 @dataclass
@@ -53,9 +62,10 @@ class LDOSConfig:
     ypc2_r0: float = 1.8
     ypc2_sig_r: float = 0.45
     ypc2_ang_mix: float = 0.0
-    # Optional central lobe to lift the molecule center
-    ypc2_center_amp: float = 0.0
-    ypc2_center_kappa: float = 1.1
+    # Optional flat central plateau (soft disk)
+    ypc2_center_plateau_amp: float = 0.0
+    ypc2_center_plateau_radius: float = 2.0
+    ypc2_center_plateau_sigma: float = 0.6
     # Optional plateau term for YPc2 (soft disk)
     ypc2_plateau_amp: float = 0.0
     ypc2_plateau_radius: float = 5.0
@@ -75,6 +85,12 @@ class STMConfig:
 class NoiseConfig:
     # Tip blur sigma in Angstroms (Å)
     tip_sigma: Tuple[float, float] = (2.5, 4.0)
+    tip_mode: str = "single"
+    tip_count: Tuple[int, int] = (2, 3)
+    tip_offset_range: Tuple[float, float] = (0.0, 1.0)
+    tip_z_range: Tuple[float, float] = (0.0, 1.0)
+    tip_weight_range: Tuple[float, float] = (0.0, 0.7)
+    tip_z_decay: float = 1.0
     gaussian_noise_sigma: Tuple[float, float] = (0.0, 0.02)
     line_noise_sigma: Tuple[float, float] = (0.0, 0.03)
     # Line-noise correlation length in Angstroms (Å)

@@ -20,6 +20,7 @@ def generate_mask(scene, pixels, label_cfg, bbox=None, blur_radius: float = 0.0)
     # background (outside bbox) is not applicable since grid is within bbox
 
     # step edges
+    corner_points = []
     for edge in scene.step_edges:
         width = label_cfg.step_edge_width + 2.0 * blur_radius
         normal = np.array(edge.get("normal", [1.0, 0.0]), dtype=float)
@@ -30,6 +31,19 @@ def generate_mask(scene, pixels, label_cfg, bbox=None, blur_radius: float = 0.0)
         point = np.array(edge.get("point", [0.0, 0.0]), dtype=float)
         dist = np.abs((x - point[0]) * normal[0] + (y - point[1]) * normal[1])
         mask[dist <= width * 0.5] = 5
+        corner_point = edge.get("corner_point")
+        corner_radius = edge.get("corner_radius", 0.0)
+        if corner_point is not None and corner_radius and corner_radius > 0:
+            corner_points.append((corner_point, float(corner_radius)))
+
+    if corner_points:
+        for corner_point, corner_radius in corner_points:
+            cp = np.array(corner_point, dtype=float)
+            dx = x - cp[0]
+            dy = y - cp[1]
+            dist2 = dx * dx + dy * dy
+            radius = corner_radius + blur_radius
+            mask[dist2 <= radius * radius] = 5
 
     # vacancies
     if scene.vacancies.size > 0:
@@ -46,6 +60,9 @@ def generate_mask(scene, pixels, label_cfg, bbox=None, blur_radius: float = 0.0)
     # adatom-on-YPc2: label the whole molecule footprint as class 6
     adatom_on_ypc2 = np.array(scene.metadata.get("adatom_on_top_centers", []), dtype=float)
     adatom_on_ypc2_radius = max(label_cfg.molecule_radius, label_cfg.adatom_on_ypc2_radius)
+    width = float(scene.metadata.get("adatom_on_top_width", 0.0) or 0.0)
+    if width > 0:
+        adatom_on_ypc2_radius = max(adatom_on_ypc2_radius, 0.5 * width)
     _mark_circle(
         mask,
         x,

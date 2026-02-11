@@ -17,6 +17,11 @@ This repository implements a synthetic STM topography simulator to generate labe
   - YPc2 ring-orbital LDOS model (center/plateau terms) with per-molecule orientation.
   - Continuum surface LDOS mode (default) to remove atomic corrugation from substrate.
   - Adatom-on-YPc2 lattice support with separate mask label (class 6).
+  - Multi-tip (double/triple) convolution mode with per-tip offsets, weights, and blur.
+  - Corner step edges with optional rounded height transition and mask rounding.
+  - Multi-island YPc2 lattices with per-island orientation/angle and edge-biased removals.
+  - YPc2 central plateau LDOS term for flatter molecule center.
+  - Adatom-on-YPc2 width control for broader LDOS and mask footprint.
 
 ### Units & Grid
 - Standardized lengths to **Angstroms ()** in config and geometry.
@@ -42,6 +47,7 @@ This repository implements a synthetic STM topography simulator to generate labe
 ### Masks
 - Masks now expand by the effective tip blur radius to align with blurred images.
 - Adatom-on-YPc2 molecules are labeled as class `6` (`adatom_on_ypc2`).
+ - Adatom-on-YPc2 mask radius can expand using the new `adatom_on_top_width`.
 
 ### New Notebook
 - `notebooks/FePc_Layer_Ag001.ipynb` creates a 20 nm Ag(100) scene with a 3x3 FePc layer (1.5 nm spacing), optional step, and shows 2D/3D + topography.
@@ -51,6 +57,7 @@ This repository implements a synthetic STM topography simulator to generate labe
 ### Dataset Scripts
 - `scripts/generate_fepc_layer.py` generates datasets of FePc layer images with optional randomized lattice spacing and grid size, TIFF outputs, and metadata.
 - `scripts/generate_ypc2_layer.py` generates YPc2 lattice datasets with LDOS and noise controls, adatom-on-top, and realism preset.
+  - New CLI args for multi-tip, corner steps, multi-island lattices, YPc2 center plateau, and adatom-on-top width.
 - Colored TIFF quicklook outputs (inferno / tab20) if `tifffile` is installed.
 - Script auto-skips TIFF outputs if `tifffile` is not available.
 
